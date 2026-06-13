@@ -28,6 +28,10 @@ router.get('/:id/airline-tips', packingListController.getAirlineTips.bind(packin
 router.get('/:id/reminders/documents', packingListController.getDocumentReminders.bind(packingListController));
 router.get('/:id/reminders/liquids', packingListController.getLiquidReminders.bind(packingListController));
 
+router.post('/:id/documents', packingListController.updateDocumentExpiry.bind(packingListController));
+
+router.get('/:id/permission', packingListController.getPermission.bind(packingListController));
+
 router.post('/:id/share', packingListController.shareList.bind(packingListController));
 router.delete('/shared/:shareId', packingListController.unshareList.bind(packingListController));
 

@@ -108,23 +108,33 @@ export class PackingListService {
   async addCustomItem(
     listId: string,
     userId: string,
-    item: PackingItemInput
+    item: PackingItemInput,
+    permission?: 'view' | 'edit'
   ): Promise<PackingListResponse> {
     const list = await prisma.packingList.findFirst({
       where: {
         id: listId,
-        userId
+        OR: [
+          { userId },
+          { sharedWith: { some: { sharedWith: userId } } }
+        ]
       }
     });
 
     if (!list) {
-      throw new Error('清单不存在或无权修改');
+      throw new Error('清单不存在或无权访问');
+    }
+
+    if (permission === 'view') {
+      throw new Error('当前权限无法添加物品');
     }
 
     const customItems = JSON.parse(list.customItems) as PackingItemInput[];
+    const id = `custom-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    
     const newItem: PackingItemInput = {
       ...item,
-      id: `custom-${Date.now()}`,
+      id,
       isPacked: false
     };
     
@@ -144,17 +154,25 @@ export class PackingListService {
     listId: string,
     userId: string,
     itemId: string,
-    updates: { isPacked?: boolean; quantity?: number; note?: string }
+    updates: { isPacked?: boolean; quantity?: number; note?: string; priority?: string; expiryDate?: string },
+    permission?: 'view' | 'edit'
   ): Promise<PackingListResponse> {
     const list = await prisma.packingList.findFirst({
       where: {
         id: listId,
-        userId
+        OR: [
+          { userId },
+          { sharedWith: { some: { sharedWith: userId } } }
+        ]
       }
     });
 
     if (!list) {
-      throw new Error('清单不存在或无权修改');
+      throw new Error('清单不存在或无权访问');
+    }
+
+    if (permission === 'view') {
+      throw new Error('当前权限无法修改物品');
     }
 
     const generatedItems = JSON.parse(list.generatedItems) as PackingItemInput[];
@@ -273,8 +291,9 @@ export class PackingListService {
     const documents = list.items
       .filter(item => item.category === '证件类')
       .map(item => ({
+        id: item.id,
         type: item.name,
-        expiryDate: undefined
+        expiryDate: item.expiryDate ? new Date(item.expiryDate) : undefined
       }));
     return reminderService.checkDocumentExpiration(documents);
   }
@@ -325,13 +344,67 @@ export class PackingListService {
     }
   }
 
-  async getSharedLists(userId: string): Promise<PackingListResponse[]> {
+  async getSharedLists(userId: string): Promise<any[]> {
     const sharedLists = await prisma.sharedList.findMany({
       where: { sharedWith: userId },
-      include: { packingList: true }
+      include: { 
+        packingList: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true
+              }
+            }
+          }
+        }
+      }
     });
 
-    return sharedLists.map(share => this.formatResponse(share.packingList));
+    return sharedLists.map(share => ({
+      shareId: share.id,
+      permission: share.permission,
+      sharedBy: share.packingList.user,
+      list: this.formatResponse(share.packingList)
+    }));
+  }
+
+  async getUserPermission(listId: string, userId: string): Promise<'owner' | 'edit' | 'view' | null> {
+    const list = await prisma.packingList.findFirst({
+      where: { id: listId }
+    });
+
+    if (!list) {
+      return null;
+    }
+
+    if (list.userId === userId) {
+      return 'owner';
+    }
+
+    const share = await prisma.sharedList.findFirst({
+      where: {
+        packingListId: listId,
+        sharedWith: userId
+      }
+    });
+
+    if (!share) {
+      return null;
+    }
+
+    return share.permission as 'view' | 'edit';
+  }
+
+  async updateDocumentExpiry(
+    listId: string,
+    userId: string,
+    documentId: string,
+    expiryDate: string,
+    permission?: 'view' | 'edit'
+  ): Promise<PackingListResponse> {
+    return this.updateItem(listId, userId, documentId, { expiryDate }, permission);
   }
 
   async unshareList(shareId: string, userId: string): Promise<void> {

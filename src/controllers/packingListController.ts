@@ -6,7 +6,8 @@ import {
   updateListSchema,
   addItemSchema,
   updateItemSchema,
-  shareListSchema
+  shareListSchema,
+  updateDocumentSchema
 } from '../utils/validation';
 
 export class PackingListController {
@@ -114,7 +115,8 @@ export class PackingListController {
     try {
       const { id } = req.params;
       const validatedData = addItemSchema.parse(req.body);
-      const result = await packingListService.addCustomItem(id, req.userId!, validatedData);
+      const permission = await packingListService.getUserPermission(id, req.userId!);
+      const result = await packingListService.addCustomItem(id, req.userId!, validatedData, permission || 'view');
 
       res.status(201).json({
         success: true,
@@ -135,7 +137,8 @@ export class PackingListController {
     try {
       const { id, itemId } = req.params;
       const validatedData = updateItemSchema.parse(req.body);
-      const result = await packingListService.updateItem(id, req.userId!, itemId, validatedData);
+      const permission = await packingListService.getUserPermission(id, req.userId!);
+      const result = await packingListService.updateItem(id, req.userId!, itemId, validatedData, permission || 'view');
 
       res.json({
         success: true,
@@ -408,6 +411,54 @@ export class PackingListController {
         error: {
           code: 'LIQUID_REMINDERS_FAILED',
           message: error.message || '获取液体提醒失败'
+        }
+      });
+    }
+  }
+
+  async getPermission(req: AuthRequest, res: Response<ApiResponse>): Promise<void> {
+    try {
+      const { id } = req.params;
+      const permission = await packingListService.getUserPermission(id, req.userId!);
+
+      res.json({
+        success: true,
+        data: { permission }
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: {
+          code: 'PERMISSION_CHECK_FAILED',
+          message: error.message || '获取权限失败'
+        }
+      });
+    }
+  }
+
+  async updateDocumentExpiry(req: AuthRequest, res: Response<ApiResponse>): Promise<void> {
+    try {
+      const { id } = req.params;
+      const validatedData = updateDocumentSchema.parse(req.body);
+      const permission = await packingListService.getUserPermission(id, req.userId!);
+      const result = await packingListService.updateDocumentExpiry(
+        id, 
+        req.userId!, 
+        validatedData.documentId, 
+        validatedData.expiryDate,
+        permission || 'view'
+      );
+
+      res.json({
+        success: true,
+        data: result
+      });
+    } catch (error: any) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'UPDATE_DOCUMENT_FAILED',
+          message: error.message || '更新证件有效期失败'
         }
       });
     }

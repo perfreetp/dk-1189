@@ -43,7 +43,14 @@ export const addItemSchema = z.object({
 export const updateItemSchema = z.object({
   isPacked: z.boolean().optional(),
   quantity: z.number().int().positive().optional(),
-  note: z.string().optional()
+  note: z.string().optional(),
+  priority: z.enum(['required', 'recommended', 'optional']).optional(),
+  expiryDate: z.string().optional()
+});
+
+export const updateDocumentSchema = z.object({
+  documentId: z.string().min(1, '证件ID不能为空'),
+  expiryDate: z.string().min(1, '有效期不能为空')
 });
 
 export const shareListSchema = z.object({

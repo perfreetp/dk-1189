@@ -117,6 +117,16 @@ const itemTemplates: ItemTemplate[] = [
 ];
 
 export class ListGenerationService {
+  private getStableItemId(name: string, category: string): string {
+    const normalized = name.toLowerCase()
+      .replace(/[^a-z0-9\u4e00-\u9fa5]/g, '')
+      .substring(0, 20);
+    const catNormalized = category.toLowerCase()
+      .replace(/[^a-z0-9\u4e00-\u9fa5]/g, '')
+      .substring(0, 10);
+    return `${catNormalized}-${normalized}`;
+  }
+
   generatePackingList(params: GenerateParams): PackingItemInput[] {
     const items: PackingItemInput[] = [];
     
@@ -129,9 +139,12 @@ export class ListGenerationService {
         ? (template as any).quantityFormula(params)
         : 1;
 
+      const category = categoryMapping[template.category] || template.category;
+      
       items.push({
+        id: this.getStableItemId(template.name, category),
         name: template.name,
-        category: categoryMapping[template.category] || template.category,
+        category: category,
         priority: template.priority,
         weight: template.weight,
         isLiquid: template.isLiquid || false,

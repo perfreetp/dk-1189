@@ -27,7 +27,7 @@ export interface GenerateParams {
 }
 
 export interface PackingItemInput {
-  id?: string;
+  id: string;
   name: string;
   category: string;
   priority: Priority;
@@ -36,6 +36,7 @@ export interface PackingItemInput {
   isPacked?: boolean;
   quantity?: number;
   note?: string;
+  expiryDate?: string;
 }
 
 export interface PackingListResponse {
