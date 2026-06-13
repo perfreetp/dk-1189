@@ -1,6 +1,7 @@
 import { RiskAlert } from '../types';
 
 interface DocumentInfo {
+  id?: string;
   type: string;
   expiryDate?: Date;
   issueDate?: Date;
@@ -16,29 +17,224 @@ export class ReminderService {
     for (const doc of documents) {
       if (doc.expiryDate) {
         const expiry = new Date(doc.expiryDate);
+        const monthsLeft = this.getMonthsDifference(now, expiry);
         
         if (expiry < now) {
+          const suggestions = this.getExpiredSuggestion(doc.type);
+          alerts.push({
+            type: 'danger',
+            category: '证件过期',
+            item: doc.type,
+            message: `${doc.type}已于${this.formatDate(expiry)}过期`,
+            suggestion: suggestions
+          });
+        } else if (monthsLeft <= 0) {
           alerts.push({
             type: 'danger',
             category: '证件过期',
             item: doc.type,
             message: `${doc.type}已过期`,
-            suggestion: '请立即更新或续办相关证件'
+            suggestion: this.getExpiredSuggestion(doc.type)
           });
-        } else if (expiry < sixMonthsLater) {
-          const monthsLeft = this.getMonthsDifference(now, expiry);
+        } else if (monthsLeft < 6) {
+          const suggestions = this.getExpiringSuggestion(doc.type, monthsLeft);
           alerts.push({
             type: 'warning',
             category: '证件临期',
             item: doc.type,
             message: `${doc.type}将在${monthsLeft}个月后过期（${this.formatDate(expiry)}）`,
-            suggestion: '部分国家要求护照有效期至少6个月，建议考虑更新'
+            suggestion: suggestions
+          });
+        } else if (monthsLeft < 12) {
+          alerts.push({
+            type: 'info',
+            category: '证件提示',
+            item: doc.type,
+            message: `${doc.type}剩余有效期约${monthsLeft}个月`,
+            suggestion: '建议在有效期到期前3个月申请续办，以免影响出行'
           });
         }
       }
     }
     
     return alerts;
+  }
+
+  checkInternationalTravelDocuments(
+    documents: DocumentInfo[], 
+    destination: string
+  ): RiskAlert[] {
+    const alerts: RiskAlert[] = [];
+    const isInternational = this.isInternationalDestination(destination);
+    
+    if (!isInternational) {
+      return alerts;
+    }
+
+    const passport = documents.find(d => d.type.includes('护照'));
+    const visa = documents.find(d => d.type.includes('签证'));
+    
+    const now = new Date();
+    const sixMonthsLater = new Date();
+    sixMonthsLater.setMonth(now.getMonth() + 6);
+
+    if (!passport) {
+      alerts.push({
+        type: 'danger',
+        category: '证件缺失',
+        item: '护照',
+        message: '国际旅行需要护照',
+        suggestion: '请确认已办理护照，并确保有效期不少于6个月'
+      });
+    } else if (passport.expiryDate) {
+      const expiry = new Date(passport.expiryDate);
+      const monthsLeft = this.getMonthsDifference(now, expiry);
+      
+      if (expiry < now) {
+        alerts.push({
+          type: 'danger',
+          category: '护照过期',
+          item: '护照',
+          message: `护照已于${this.formatDate(expiry)}过期`,
+          suggestion: '请立即前往出入境管理局申请换发新护照，通常需要7-10个工作日'
+        });
+      } else if (monthsLeft < 6) {
+        alerts.push({
+          type: 'danger',
+          category: '护照有效期不足',
+          item: '护照',
+          message: `护照有效期仅剩余${monthsLeft}个月`,
+          suggestion: `
+            【重要】大多数国家要求入境时护照有效期至少6个月
+            建议立即办理护照换发，流程：
+            1. 准备材料：身份证、旧护照、2寸照片
+            2. 在线预约出入境管理局
+            3. 现场办理，7-10个工作日可取
+            4. 如需加急可选择EMS邮寄服务
+          `
+        });
+      }
+    }
+
+    if (!visa) {
+      alerts.push({
+        type: 'warning',
+        category: '签证提示',
+        item: '签证',
+        message: '国际旅行可能需要签证',
+        suggestion: `
+          请确认目的地国家的签证要求：
+          • 免签国家：可直接入境
+          • 落地签：抵达后办理
+          • 需要提前申请：请准备材料递交使领馆
+          建议提前3-4周开始办理签证手续
+        `
+      });
+    } else if (visa.expiryDate) {
+      const expiry = new Date(visa.expiryDate);
+      const monthsLeft = this.getMonthsDifference(now, expiry);
+      
+      if (expiry < now) {
+        alerts.push({
+          type: 'danger',
+          category: '签证过期',
+          item: '签证',
+          message: `签证已于${this.formatDate(expiry)}过期`,
+          suggestion: `
+            签证已过期，请重新申请：
+            1. 确认目的地国家最新签证政策
+            2. 准备申请材料（邀请函、行程单、资产证明等）
+            3. 通过使领馆或签证中心提交申请
+            4. 等待审批，通常需要1-2周
+          `
+        });
+      } else if (monthsLeft < 1) {
+        alerts.push({
+          type: 'warning',
+          category: '签证即将过期',
+          item: '签证',
+          message: `签证将在${monthsLeft}个月后过期`,
+          suggestion: '请确认行程是否在签证有效期内，如需延期请提前申请'
+        });
+      }
+    }
+
+    return alerts;
+  }
+
+  private isInternationalDestination(destination: string): boolean {
+    const domesticKeywords = ['中国', '北京', '上海', '广州', '深圳', '国内'];
+    const internationalKeywords = ['美国', '日本', '韩国', '泰国', '欧洲', '东京', '纽约', '巴黎'];
+    
+    const destLower = destination.toLowerCase();
+    
+    if (internationalKeywords.some(kw => destination.includes(kw))) {
+      return true;
+    }
+    
+    if (domesticKeywords.some(kw => destination.includes(kw))) {
+      return false;
+    }
+    
+    return true;
+  }
+
+  private getExpiredSuggestion(docType: string): string {
+    if (docType.includes('护照')) {
+      return `
+        护照已过期，请立即办理换发：
+        1. 准备材料：身份证原件、旧护照、2寸白底照片
+        2. 在线预约当地出入境管理局
+        3. 现场采集指纹和拍照
+        4. 等待7-10个工作日领取新护照
+        【加急服务】部分城市支持3-5个工作日加急
+      `;
+    }
+    
+    if (docType.includes('签证')) {
+      return `
+        签证已过期，请重新申请：
+        1. 查阅目的地国家最新签证政策
+        2. 准备材料：护照、申请表、照片、行程单等
+        3. 通过使领馆或授权签证中心提交
+        4. 等待审批结果，通常需1-2周
+      `;
+    }
+    
+    if (docType.includes('身份证')) {
+      return `
+        身份证已过期，请及时更换：
+        1. 携带旧身份证到户籍所在地派出所
+        2. 现场拍照采集
+        3. 20个工作日后领取新证
+        【临时身份证】可当场办理，有效期3个月
+      `;
+    }
+    
+    return '请立即更新或续办相关证件';
+  }
+
+  private getExpiringSuggestion(docType: string, monthsLeft: number): string {
+    if (docType.includes('护照')) {
+      return `
+        【重要】护照有效期不足${monthsLeft}个月
+        国际旅行要求护照有效期至少6个月！
+        • 建议尽快办理换发，以免影响出行计划
+        • 换发周期约7-10个工作日
+        • 如需加急可选择EMS邮寄服务
+      `;
+    }
+    
+    if (docType.includes('签证')) {
+      return `
+        签证将在${monthsLeft}个月后过期
+        • 确认行程是否在有效期内
+        • 如需延期请提前联系使领馆
+        • 部分国家支持在线续签
+      `;
+    }
+    
+    return '部分国家要求证件有效期至少6个月，建议考虑更新';
   }
 
   checkLiquidRestrictions(items: Array<{

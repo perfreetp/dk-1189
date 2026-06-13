@@ -10,6 +10,36 @@ import {
 } from '../types';
 
 export class PackingListService {
+  private async logActivity(
+    listId: string,
+    userId: string,
+    action: string,
+    targetType: string,
+    targetId: string,
+    targetName: string,
+    oldValue?: string,
+    newValue?: string,
+    detail?: string
+  ): Promise<void> {
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) return;
+
+    await prisma.activityLog.create({
+      data: {
+        packingListId: listId,
+        userId: user.id,
+        userName: user.name,
+        userEmail: user.email,
+        action,
+        targetType,
+        targetId,
+        targetName,
+        oldValue,
+        newValue,
+        detail
+      }
+    });
+  }
   async generateList(userId: string, params: GenerateParams): Promise<PackingListResponse> {
     const items = listGenerationService.generatePackingList(params);
     
@@ -179,19 +209,24 @@ export class PackingListService {
     const customItems = JSON.parse(list.customItems) as PackingItemInput[];
     
     let itemFound = false;
-    let updatedItems: PackingItemInput[];
+    let oldItem: PackingItemInput | null = null;
+    let targetName = '';
+    let isCustom = false;
     
     const genIndex = generatedItems.findIndex(item => item.id === itemId);
     if (genIndex !== -1) {
+      oldItem = { ...generatedItems[genIndex] };
+      targetName = generatedItems[genIndex].name;
       generatedItems[genIndex] = { ...generatedItems[genIndex], ...updates };
       itemFound = true;
-      updatedItems = generatedItems;
     } else {
       const custIndex = customItems.findIndex(item => item.id === itemId);
       if (custIndex !== -1) {
+        oldItem = { ...customItems[custIndex] };
+        targetName = customItems[custIndex].name;
+        isCustom = true;
         customItems[custIndex] = { ...customItems[custIndex], ...updates };
         itemFound = true;
-        updatedItems = customItems;
       }
     }
 
@@ -207,7 +242,74 @@ export class PackingListService {
       }
     });
 
+    await this.logItemChanges(listId, userId, itemId, targetName, oldItem!, updates);
+
     return this.formatResponse(updatedList);
+  }
+
+  private async logItemChanges(
+    listId: string,
+    userId: string,
+    itemId: string,
+    itemName: string,
+    oldItem: PackingItemInput,
+    updates: { isPacked?: boolean; quantity?: number; note?: string; priority?: string; expiryDate?: string }
+  ): Promise<void> {
+    if (updates.isPacked !== undefined && updates.isPacked !== oldItem.isPacked) {
+      await this.logActivity(
+        listId,
+        userId,
+        updates.isPacked ? 'packed' : 'unpacked',
+        'item',
+        itemId,
+        itemName,
+        oldItem.isPacked?.toString() || 'false',
+        updates.isPacked.toString(),
+        updates.isPacked ? '标记为已打包' : '取消打包标记'
+      );
+    }
+
+    if (updates.priority !== undefined && updates.priority !== oldItem.priority) {
+      await this.logActivity(
+        listId,
+        userId,
+        'priority_changed',
+        'item',
+        itemId,
+        itemName,
+        oldItem.priority,
+        updates.priority,
+        `优先级从${oldItem.priority}改为${updates.priority}`
+      );
+    }
+
+    if (updates.expiryDate !== undefined && updates.expiryDate !== oldItem.expiryDate) {
+      await this.logActivity(
+        listId,
+        userId,
+        'document_updated',
+        'item',
+        itemId,
+        itemName,
+        oldItem.expiryDate || '未设置',
+        updates.expiryDate,
+        '更新证件有效期'
+      );
+    }
+
+    if (updates.quantity !== undefined && updates.quantity !== oldItem.quantity) {
+      await this.logActivity(
+        listId,
+        userId,
+        'quantity_changed',
+        'item',
+        itemId,
+        itemName,
+        oldItem.quantity?.toString() || '1',
+        updates.quantity.toString(),
+        `数量从${oldItem.quantity || 1}改为${updates.quantity}`
+      );
+    }
   }
 
   async deleteItem(
@@ -295,7 +397,11 @@ export class PackingListService {
         type: item.name,
         expiryDate: item.expiryDate ? new Date(item.expiryDate) : undefined
       }));
-    return reminderService.checkDocumentExpiration(documents);
+    
+    const baseAlerts = reminderService.checkDocumentExpiration(documents);
+    const internationalAlerts = reminderService.checkInternationalTravelDocuments(documents, list.destination);
+    
+    return [...baseAlerts, ...internationalAlerts];
   }
 
   async getLiquidReminders(listId: string, userId: string) {
@@ -306,7 +412,7 @@ export class PackingListService {
   async shareList(
     listId: string,
     userId: string,
-    sharedWith: string,
+    sharedWithEmail: string,
     permission: 'view' | 'edit'
   ): Promise<void> {
     const list = await prisma.packingList.findFirst({
@@ -320,10 +426,20 @@ export class PackingListService {
       throw new Error('清单不存在或无权共享');
     }
 
+    const sharedByUser = await prisma.user.findUnique({ where: { id: userId } });
+    if (!sharedByUser) {
+      throw new Error('共享者信息不存在');
+    }
+
+    const sharedWithUser = await prisma.user.findUnique({ where: { email: sharedWithEmail } });
+    if (!sharedWithUser) {
+      throw new Error(`用户 ${sharedWithEmail} 不存在，请确认邮箱是否正确`);
+    }
+
     const existingShare = await prisma.sharedList.findFirst({
       where: {
         packingListId: listId,
-        sharedWith
+        sharedWith: sharedWithUser.id
       }
     });
 
@@ -337,11 +453,42 @@ export class PackingListService {
         data: {
           packingListId: listId,
           sharedBy: userId,
-          sharedWith,
+          sharedByEmail: sharedByUser.email,
+          sharedByUsername: sharedByUser.name,
+          sharedWith: sharedWithUser.id,
+          sharedWithEmail: sharedWithUser.email,
+          sharedWithUsername: sharedWithUser.name,
           permission
         }
       });
     }
+
+    await this.logActivity(
+      listId,
+      userId,
+      'shared',
+      'list',
+      listId,
+      list.name,
+      undefined,
+      permission,
+      `共享给 ${sharedWithUser.name} (${sharedWithUser.email})`
+    );
+  }
+
+  async getActivityLogs(listId: string, userId: string): Promise<any[]> {
+    const permission = await this.getUserPermission(listId, userId);
+    if (!permission) {
+      throw new Error('无权访问该清单');
+    }
+
+    const logs = await prisma.activityLog.findMany({
+      where: { packingListId: listId },
+      orderBy: { createdAt: 'desc' },
+      take: 50
+    });
+
+    return logs;
   }
 
   async getSharedLists(userId: string): Promise<any[]> {

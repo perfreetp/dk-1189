@@ -32,6 +32,8 @@ router.post('/:id/documents', packingListController.updateDocumentExpiry.bind(pa
 
 router.get('/:id/permission', packingListController.getPermission.bind(packingListController));
 
+router.get('/:id/activity-logs', packingListController.getActivityLogs.bind(packingListController));
+
 router.post('/:id/share', packingListController.shareList.bind(packingListController));
 router.delete('/shared/:shareId', packingListController.unshareList.bind(packingListController));
 

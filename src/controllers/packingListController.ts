@@ -463,6 +463,26 @@ export class PackingListController {
       });
     }
   }
+
+  async getActivityLogs(req: AuthRequest, res: Response<ApiResponse>): Promise<void> {
+    try {
+      const { id } = req.params;
+      const result = await packingListService.getActivityLogs(id, req.userId!);
+
+      res.json({
+        success: true,
+        data: result
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: {
+          code: 'ACTIVITY_LOGS_FAILED',
+          message: error.message || '获取活动日志失败'
+        }
+      });
+    }
+  }
 }
 
 export default new PackingListController();
